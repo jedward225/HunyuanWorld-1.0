@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 hunyuan3d/
+test_results/*
