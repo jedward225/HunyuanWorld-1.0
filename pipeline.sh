@@ -177,8 +177,10 @@ echo "✅ Step 3 completed: $PLY_PATH"
 # Step 4: Render 3D world
 echo "🎬 Step 4: Rendering 3D world and generating panorama..."
 
-# Update ljj.py with the correct PLY path
-sed -i "s|pcd=PcdMgr(ply_file_path=f'.*')|pcd=PcdMgr(ply_file_path=f'$PLY_PATH')|g" FlexWorld/ljj.py
+# Update ljj.py with the correct PLY path (use absolute path)
+ABS_PLY_PATH="$(realpath $PLY_PATH)"
+sed -i "s|pcd=PcdMgr(ply_file_path=f'.*')|pcd=PcdMgr(ply_file_path=f'$ABS_PLY_PATH')|g" FlexWorld/ljj.py
+echo "Updated ljj.py to use: $ABS_PLY_PATH"
 
 # Run FlexWorld rendering
 cd FlexWorld

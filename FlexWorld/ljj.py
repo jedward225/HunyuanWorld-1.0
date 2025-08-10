@@ -144,8 +144,8 @@ print(f"Camera settings: FOV={fov}°, focal_length={f:.2f}, frame_size={frame_si
 
 Mcam.set_default_f(f)
 plan = CamPlanner() # 控制相机运镜
-# pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
-pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
+# pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/village/pointcloud/panorama_pointcloud.ply')
+pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/village/pointcloud/panorama_pointcloud.ply')
 
 pcd.pts[:,:3]=rotate_point_cloud(pcd.pts[:,:3], angle_x_deg=90, angle_y_deg=-90, angle_z_deg=0)
 

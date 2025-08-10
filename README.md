@@ -72,14 +72,16 @@ pip install -r requirements.txt
 We provide a unified script `pipeline.sh` that automates the entire process:
 
 ```bash
-# From text prompt
-./pipeline.sh --mode text --input "a beautiful street scene" --scene street
-
-# From image
-./pipeline.sh --mode image --input "/path/to/image.jpg" --scene custom
-
-# From existing panorama
-./pipeline.sh --mode existing --input "/path/to/panorama.png" --scene pano
+# 1. 从文本生成：
+./pipeline.sh --mode text --input "a beautiful street scene with buildings" --scene street
+# 2. 从图片生成：
+./pipeline.sh --mode image --input "/path/to/your/image.jpg" --scene custom
+# 3. 使用已有全景图：
+./pipeline.sh --mode existing --input "/path/to/panorama.png" --scene existing_pano
+# 4. 只调整已有全景图尺寸：
+./pipeline.sh --mode existing --input "/path/to/panorama.png" --scene resized --resize-only
+# 5. 指定GPU：
+./pipeline.sh --mode text --input "mountain landscape" --scene mountain --gpu 0
 ```
 
 ## 📁 Project Structure
