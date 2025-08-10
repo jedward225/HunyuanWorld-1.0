@@ -21,6 +21,8 @@ import cv2
 from PIL import Image
 import os
 from ops.utils.general import easy_save_video
+from ops.utils.pano_tool import multi_Perspec2Equirec as m_P2E
+import tempfile
 
 # def image2pcd(img):
 #     """
@@ -85,198 +87,64 @@ def rotate_point_cloud(point_cloud, angle_x_deg=0, angle_y_deg=0, angle_z_deg=0)
 
     return rotated_point_cloud
 
-def frames_to_panorama_advanced(frames, trajectory, output_width=1920, output_height=960):
+def video_to_panorama_flexworld(video_frames, output_dir, fov=90):
     """
-    从视频帧重建清晰的全景图，避免重叠透明效果。
-    为每个全景图位置选择最佳的源帧，而不是混合所有帧。
+    使用FlexWorld的video2pano方法直接从视频帧生成全景图
     
     参数:
-    frames: 视频帧列表 [N, H, W, C]
-    trajectory: 相机轨迹（Mcam对象列表）
-    output_width: 输出全景图宽度  
-    output_height: 输出全景图高度
-    
-    返回:
-    panorama: 清晰的全景图 numpy数组
-    mask: 有效像素mask
-    """
-    if len(frames) == 0 or len(trajectory) == 0:
-        return np.zeros((output_height, output_width, 3), dtype=np.uint8), np.zeros((output_height, output_width), dtype=np.uint8)
-    
-    if len(frames) != len(trajectory):
-        print(f"Warning: frames ({len(frames)}) and trajectory ({len(trajectory)}) length mismatch")
-        min_len = min(len(frames), len(trajectory))
-        frames = frames[:min_len]
-        trajectory = trajectory[:min_len]
-    
-    # 获取帧尺寸
-    frame_h, frame_w = frames[0].shape[:2]
-    
-    # 初始化全景图和最佳帧选择
-    panorama = np.zeros((output_height, output_width, 3), dtype=np.uint8)
-    mask = np.zeros((output_height, output_width), dtype=np.uint8)
-    best_frame_distance = np.full((output_height, output_width), np.inf)  # 用于选择最佳帧
-    
-    print(f"Reconstructing clean panorama from {len(frames)} frames...")
-    
-    # 为每个帧创建网格坐标
-    y_coords, x_coords = np.meshgrid(np.arange(frame_h), np.arange(frame_w), indexing='ij')
-    
-    for idx, (frame, cam) in enumerate(zip(frames, trajectory)):
-        # 获取相机参数
-        K = cam.getK()
-        R = cam.R
-        fx, fy = K[0, 0], K[1, 1]
-        cx, cy = K[0, 2], K[1, 2]
-        
-        # 计算当前相机的朝向中心（球面坐标）
-        # 相机朝向是-Z方向
-        cam_forward = -R[:, 2]  # 相机朝向向量
-        cam_azimuth = np.arctan2(cam_forward[0], cam_forward[2])  # 相机朝向的方位角
-        
-        # 将像素坐标转换为归一化相机坐标
-        x_norm = (x_coords - cx) / fx
-        y_norm = (y_coords - cy) / fy
-        
-        # 创建方向向量（相机坐标系）
-        dirs_cam = np.stack([x_norm, y_norm, np.ones_like(x_norm)], axis=-1)
-        dirs_cam = dirs_cam / np.linalg.norm(dirs_cam, axis=-1, keepdims=True)
-        
-        # 转换到世界坐标系
-        dirs_world = dirs_cam @ R.T
-        
-        # 计算球面坐标
-        theta = np.arctan2(dirs_world[..., 0], dirs_world[..., 2])  # 方位角 [-π, π]
-        phi = np.arcsin(np.clip(dirs_world[..., 1], -1, 1))  # 俯仰角 [-π/2, π/2]
-        
-        # 映射到全景图像素坐标
-        pano_x = ((theta + np.pi) / (2 * np.pi) * output_width).astype(int)
-        pano_y = ((phi + np.pi/2) / np.pi * output_height).astype(int)
-        
-        # 处理边界
-        pano_x = np.clip(pano_x, 0, output_width - 1)
-        pano_y = np.clip(pano_y, 0, output_height - 1)
-        
-        # 计算每个像素到相机朝向中心的角度距离
-        pixel_azimuth = theta
-        angle_distance = np.abs(((pixel_azimuth - cam_azimuth + np.pi) % (2 * np.pi)) - np.pi)
-        
-        # 只处理相机视野内的像素
-        fov_h = 2 * np.arctan(frame_w / (2 * fx))
-        fov_v = 2 * np.arctan(frame_h / (2 * fy))
-        
-        valid_h = angle_distance <= fov_h / 2
-        valid_v = np.abs(phi) <= fov_v / 2
-        valid_pixels = valid_h & valid_v
-        
-        # 对于每个有效像素，检查是否应该使用当前帧
-        valid_y, valid_x = np.where(valid_pixels)
-        
-        for py, px in zip(valid_y, valid_x):
-            pano_py, pano_px = pano_y[py, px], pano_x[py, px]
-            current_distance = angle_distance[py, px]
-            
-            # 如果当前帧更接近该全景图位置的最优视角，则使用它
-            if current_distance < best_frame_distance[pano_py, pano_px]:
-                best_frame_distance[pano_py, pano_px] = current_distance
-                panorama[pano_py, pano_px] = frame[py, px]
-                mask[pano_py, pano_px] = 255
-        
-        if (idx + 1) % 10 == 0:
-            print(f"Processed {idx + 1}/{len(frames)} frames")
-    
-    # 计算覆盖率
-    coverage = np.sum(mask > 0) / (output_height * output_width) * 100
-    print(f"Clean panorama coverage: {coverage:.1f}%")
-    
-    return panorama, mask
-
-def frames_to_panorama(frames, trajectory, output_width=1920, output_height=960):
-    """
-    将渲染的视频帧转换为全景图及其mask。
-    
-    参数:
-    frames: 视频帧列表或numpy数组 [N, H, W, C]
-    trajectory: 相机轨迹（Mcam对象列表）
-    output_width: 输出全景图宽度
-    output_height: 输出全景图高度
-    
-    返回:
-    panorama: 全景图 numpy数组
-    mask: 有效像素mask
-    """
-    return frames_to_panorama_advanced(frames, trajectory, output_width, output_height)
-
-def render_panorama_from_trajectory(pcd, trajectory, output_dir='testOutput/panorama_output'):
-    """
-    从给定轨迹渲染全景图。
-    
-    参数:
-    pcd: 点云对象
-    trajectory: 相机轨迹
+    video_frames: 视频帧列表 (torch tensors)
     output_dir: 输出目录
+    fov: 视场角
     """
+    from ops.utils.pano import video2pano
+    import tempfile
+    import shutil
+    
     os.makedirs(output_dir, exist_ok=True)
     
-    # 渲染视频 (先不保存，只获取帧)
-    print(f"Rendering video frames...")
-    render_results = CamPlanner._render_video(pcd, traj=trajectory, output_path=None)
-    render_mask = CamPlanner._render_video(pcd, traj=trajectory, output_path=None, mask=True)
+    # 创建临时目录保存视频帧
+    temp_dir = tempfile.mkdtemp()
+    image_paths = []
     
-    # 使用easy_save_video保存视频
-    video_path = os.path.join(output_dir, 'rendered_video.mp4')
-    mask_video_path = os.path.join(output_dir, 'rendered_mask.mp4')
+    # 从360度视频中选择8个关键帧（每45度一帧）
+    num_frames = len(video_frames)
+    angles = [0, 45, 90, 135, 180, 225, 270, 315]
     
-    # 转换为正确格式并保存
-    frames_np = torch.stack(render_results).cpu().numpy()  # [T, H, W, C]
+    for i, angle in enumerate(angles):
+        frame_idx = int((angle / 360.0) * num_frames) % num_frames
+        frame = video_frames[frame_idx]
+        
+        # 转换为numpy并保存
+        frame_np = (frame.cpu().numpy() * 255).astype(np.uint8)
+        img_path = os.path.join(temp_dir, f"frame_{angle:03d}.png")
+        cv2.imwrite(img_path, cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR))
+        image_paths.append(img_path)
     
-    # 处理mask - mask是2D的[H, W]，需要扩展到3通道
-    mask_list = []
-    for m in render_mask:
-        if len(m.shape) == 2:  # [H, W]
-            # 扩展到3通道
-            m_3ch = m.unsqueeze(-1).expand(-1, -1, 3)  # [H, W, 3]
-        elif len(m.shape) == 3:
-            if m.shape[-1] == 1:  # [H, W, 1]
-                m_3ch = m.expand(-1, -1, 3)  # [H, W, 3]
-            else:  # already [H, W, 3]
-                m_3ch = m
-        else:
-            print(f"Warning: unexpected mask shape {m.shape}")
-            m_3ch = m
-        mask_list.append(m_3ch)
-    mask_frames_np = torch.stack(mask_list).cpu().numpy()  # [T, H, W, 3]
+    print(f"Using FlexWorld's video2pano with {len(image_paths)} frames")
     
-    easy_save_video(frames_np, video_path, fps=30, value_range="0,1")
-    easy_save_video(mask_frames_np, mask_video_path, fps=30, value_range="0,1")
+    # 使用FlexWorld的原生video2pano方法
+    pano = video2pano(image_paths, output_dir, fov=fov)
     
-    print(f"Videos saved to {video_path} and {mask_video_path}")
+    # 清理临时文件
+    shutil.rmtree(temp_dir)
     
-    # 直接使用已经渲染的帧
-    print("Using rendered frames for panorama generation...")
-    # 转换frames为numpy格式用于全景图生成
-    frames = [(frame.cpu().numpy() * 255).astype(np.uint8) for frame in render_results]
-    
-    # 转换为全景图
-    print(f"Converting frames to panorama using advanced spherical projection...")
-    # 传递真实的相机轨迹对象
-    panorama, pano_mask = frames_to_panorama(frames, trajectory)
-    
-    # 保存结果
+    # 保存最终全景图
     pano_path = os.path.join(output_dir, 'panorama.png')
-    mask_path = os.path.join(output_dir, 'panorama_mask.png')
-    
-    Image.fromarray(panorama).save(pano_path)
-    Image.fromarray(pano_mask).save(mask_path)
     
     print(f"Panorama saved to {pano_path}")
-    print(f"Mask saved to {mask_path}")
     
-    return panorama, pano_mask
+    return pano
 
-f = 383.13     #设置焦距，对应67.5°视场角
+# 设置相机参数
+frame_size = 512  # 帧尺寸
+fov = 67.5  # 视场角（度）
+# f = 383.13     #设置焦距，对应67.5°视场角
+f = frame_size / (2 * np.tan(np.radians(fov/2))) # 从FOV计算焦距: f = (w/2) / tan(fov/2)
+print(f"Camera settings: FOV={fov}°, focal_length={f:.2f}, frame_size={frame_size}x{frame_size}")
+
 Mcam.set_default_f(f)
 plan = CamPlanner() # 控制相机运镜
+# pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
 pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
 
 pcd.pts[:,:3]=rotate_point_cloud(pcd.pts[:,:3], angle_x_deg=90, angle_y_deg=-90, angle_z_deg=0)
@@ -287,14 +155,15 @@ PcdMgr.set_default_render_backend('gs')
 # traj2=plan.add_traj().move_orbit_to(0, 360, 0.1, num_frames=96).finish()
 
 # 创建360度环绕轨迹用于全景图生成
-traj_orbit = plan.add_traj().move_orbit_to(0, 360, 0.5, num_frames=72).finish()
+# traj_orbit = plan.add_traj().move_orbit_to(0, 360, 0.5, num_frames=72).finish()
+traj_orbit = plan.add_traj().move_orbit_to(0, -360, 0.5, num_frames=72).finish()
 
 # 或者使用更复杂的轨迹
 # traj_orbit=plan.add_traj().move_forward(0.5, num_frames=96).finish()
 # traj_orbit=plan.add_traj(startcam=traj_orbit[-1]).move_orbit_to(0, 360, 0.0001, num_frames=96).finish()
 
 for i in range(len(traj_orbit)):
-    traj_orbit[i].set_size(512,512)
+    traj_orbit[i].set_size(frame_size, frame_size)
 
 # 创建输出目录
 os.makedirs('testOutput', exist_ok=True)
@@ -329,9 +198,37 @@ easy_save_video(mask_frames_np, 'testOutput/test_video_mask.mp4', fps=30, value_
 
 print("Videos saved successfully!")
 
-# 生成全景图
-print("\n=== Generating Panorama from Rendered Video ===")
+# 生成全景图 - 从已有视频帧中选择8帧
+print("\n=== Generating Panorama from Video Frames ===")
 
-panorama, pano_mask = render_panorama_from_trajectory(pcd, traj_orbit, output_dir='testOutput/panorama_output')
+from ops.utils.pano import video2pano
+import tempfile
+import shutil
 
-print(f"\n✅ Panorama generated successfully")
+# 从72帧轨道视频中选择8帧（每45度一帧）
+angles = [0, 45, 90, 135, 180, 225, 270, 315]
+temp_dir = tempfile.mkdtemp()
+image_paths = []
+
+print("Selecting frames from orbit video...")
+for angle in angles:
+    # 计算对应的帧索引
+    frame_idx = int((angle / 360.0) * len(render_results)) % len(render_results)
+    frame = render_results[frame_idx]
+    
+    # 保存帧
+    frame_np = (frame.cpu().numpy() * 255).astype(np.uint8)
+    img_path = os.path.join(temp_dir, f"frame_{angle:03d}.png")
+    cv2.imwrite(img_path, cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR))
+    image_paths.append(img_path)
+    print(f"  Frame {frame_idx} -> {angle}° view")
+
+# 调用FlexWorld的video2pano
+pano_output_dir = 'testOutput/panorama_output'
+os.makedirs(pano_output_dir, exist_ok=True)
+panorama = video2pano(image_paths, pano_output_dir, fov=fov)
+
+# 清理临时文件
+shutil.rmtree(temp_dir)
+
+print(f"\n✅ Panorama generated successfully at {pano_output_dir}/pano.png")
