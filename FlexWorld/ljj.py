@@ -144,8 +144,8 @@ print(f"Camera settings: FOV={fov}°, focal_length={f:.2f}, frame_size={frame_si
 
 Mcam.set_default_f(f)
 plan = CamPlanner() # 控制相机运镜
-# pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/village/pointcloud/panorama_pointcloud.ply')
-pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/village/pointcloud/panorama_pointcloud.ply')
+# pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
+pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
 
 pcd.pts[:,:3]=rotate_point_cloud(pcd.pts[:,:3], angle_x_deg=90, angle_y_deg=-90, angle_z_deg=0)
 
@@ -198,6 +198,36 @@ easy_save_video(mask_frames_np, 'testOutput/test_video_mask.mp4', fps=30, value_
 
 print("Videos saved successfully!")
 
+# 逐帧保存功能 - 保存每一帧和对应的mask
+print("\n=== Saving individual frames and masks ===")
+frames_output_dir = 'testOutput/frames'
+os.makedirs(frames_output_dir, exist_ok=True)
+
+print(f"Saving {len(render_results)} frames...")
+for i, (frame, mask) in enumerate(zip(render_results, mask_frames_np)):
+    # 保存RGB帧
+    frame_np = (frame.cpu().numpy() * 255).astype(np.uint8)
+    frame_path = os.path.join(frames_output_dir, f'frame_{i:03d}.png')
+    cv2.imwrite(frame_path, cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR))
+    
+    # 保存mask帧
+    mask_np = (mask[..., 0] * 255).astype(np.uint8)  # 使用第一个通道
+    mask_path = os.path.join(frames_output_dir, f'mask_{i:03d}.png')
+    cv2.imwrite(mask_path, mask_np)
+    
+    # 保存反向mask（黑色=需要inpainting）
+    inverted_mask_np = 255 - mask_np
+    inverted_mask_path = os.path.join(frames_output_dir, f'inpaint_mask_{i:03d}.png')
+    cv2.imwrite(inverted_mask_path, inverted_mask_np)
+    
+    if (i + 1) % 10 == 0:
+        print(f"  Saved {i + 1}/{len(render_results)} frames")
+
+print(f"✅ All frames saved to: {frames_output_dir}/")
+print(f"  - frame_XXX.png: RGB frames")
+print(f"  - mask_XXX.png: Coverage masks (white=valid, black=missing)")  
+print(f"  - inpaint_mask_XXX.png: Inpainting masks (black=fill, white=keep)")
+
 # 生成全景图 - 从已有视频帧中选择8帧
 print("\n=== Generating Panorama from Video Frames ===")
 
@@ -216,10 +246,20 @@ for angle in angles:
     frame_idx = int((angle / 360.0) * len(render_results)) % len(render_results)
     frame = render_results[frame_idx]
     
-    # 保存帧
+    # 保存帧 - 确保正确的颜色转换
     frame_np = (frame.cpu().numpy() * 255).astype(np.uint8)
+    
+    # 调试：检查帧是否是彩色的
+    print(f"  Frame {frame_idx} shape: {frame_np.shape}, is_color: {frame_np.shape[-1] == 3 if len(frame_np.shape) == 3 else False}")
+    
     img_path = os.path.join(temp_dir, f"frame_{angle:03d}.png")
-    cv2.imwrite(img_path, cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR))
+    # 确保正确的颜色格式
+    if len(frame_np.shape) == 3 and frame_np.shape[-1] == 3:
+        cv2.imwrite(img_path, cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR))
+    else:
+        print(f"  Warning: Frame {frame_idx} is not RGB format!")
+        cv2.imwrite(img_path, frame_np)
+    
     image_paths.append(img_path)
     print(f"  Frame {frame_idx} -> {angle}° view")
 
@@ -228,7 +268,60 @@ pano_output_dir = 'testOutput/panorama_output'
 os.makedirs(pano_output_dir, exist_ok=True)
 panorama = video2pano(image_paths, pano_output_dir, fov=fov)
 
+# 生成mask版本的全景图
+print("Generating mask panorama for inpainting...")
+
+# 从mask_frames_np中选择对应的8帧
+mask_temp_dir = tempfile.mkdtemp()
+mask_image_paths = []
+
+for angle in angles:
+    frame_idx = int((angle / 360.0) * len(mask_frames_np)) % len(mask_frames_np)
+    mask_frame = mask_frames_np[frame_idx]
+    
+    # 转换为0-255范围的单通道mask (白色=有点云，黑色=无点云)
+    mask_gray = (mask_frame[..., 0] * 255).astype(np.uint8)
+    mask_3ch = cv2.cvtColor(mask_gray, cv2.COLOR_GRAY2BGR)
+    
+    # 保存mask帧
+    mask_img_path = os.path.join(mask_temp_dir, f"mask_frame_{angle:03d}.png")
+    cv2.imwrite(mask_img_path, mask_3ch)
+    mask_image_paths.append(mask_img_path)
+    print(f"  Mask frame {frame_idx} -> {angle}° view")
+
+# 使用video2pano生成mask全景图 (使用临时目录，避免覆盖彩色pano.png)
+mask_temp_output_dir = tempfile.mkdtemp()
+mask_panorama_full = video2pano(mask_image_paths, mask_temp_output_dir, fov=fov)
+
+# 裁剪并调整mask尺寸，与pano.png保持一致 (1280x576)
+mask_panorama_cropped = mask_panorama_full[650:-650]  # 裁剪高度
+mask_panorama_resized = cv2.resize(mask_panorama_cropped, (1280, 576), interpolation=cv2.INTER_LINEAR)
+
+# 保存mask全景图 (与pano.png同样尺寸)
+mask_pano_path = os.path.join(pano_output_dir, 'mask_for_inpainting.png')
+cv2.imwrite(mask_pano_path, mask_panorama_resized.astype(np.uint8))
+
+# 生成反向mask (黑色=需要inpainting的区域)
+inverted_mask = 255 - mask_panorama_resized
+inverted_mask_path = os.path.join(pano_output_dir, 'inpaint_mask.png')
+cv2.imwrite(inverted_mask_path, inverted_mask.astype(np.uint8))
+
+# 用于统计的mask
+mask_panorama = mask_panorama_resized
+
 # 清理临时文件
 shutil.rmtree(temp_dir)
+shutil.rmtree(mask_temp_dir)
+shutil.rmtree(mask_temp_output_dir)
 
-print(f"\n✅ Panorama generated successfully at {pano_output_dir}/pano.png")
+print(f"\n✅ Panorama generated successfully!")
+print(f"  - Original panorama: {pano_output_dir}/pano.png")
+print(f"  - Coverage mask: {mask_pano_path}")
+print(f"  - Inpainting mask: {inverted_mask_path}")
+
+# 计算覆盖率统计
+mask_gray = cv2.cvtColor(mask_panorama.astype(np.uint8), cv2.COLOR_BGR2GRAY)
+total_pixels = mask_gray.shape[0] * mask_gray.shape[1]
+valid_pixels = np.sum(mask_gray > 128)
+coverage_ratio = valid_pixels / total_pixels * 100
+print(f"  - Coverage: {coverage_ratio:.1f}% ({valid_pixels}/{total_pixels} pixels)")
