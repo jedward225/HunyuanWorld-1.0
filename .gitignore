@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 hunyuan3d/
 test_results/*
+FlexWorld/pytorch3d/
+FLUX-Controlnet-Inpainting/

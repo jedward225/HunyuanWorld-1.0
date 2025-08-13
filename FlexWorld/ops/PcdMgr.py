@@ -81,7 +81,8 @@ def setup_renderer(cameras, image_size, render_class = PointsRenderer):
     # Define the settings for rasterization and shading.
     raster_settings = PointsRasterizationSettings(
         image_size=image_size,
-        radius = 0.01,
+        # radius = 0.01,  # orginal radius
+        radius = 0.08,
         points_per_pixel = 10,
         bin_size = 0
     )
@@ -195,7 +196,8 @@ class PcdMgr():
         '''
         from ops.gs.base import GaussianMgr
         gs = GaussianMgr()
-        gs.init_from_pts(pts, mode="fixed", scale=0.0003, opacity=0.95)
+        # gs.init_from_pts(pts, mode="fixed", scale=0.0003, opacity=0.95)
+        gs.init_from_pts(pts, mode="fixed", scale=0.004, opacity=0.95)
         rgb, depth_img, alpha_img, *_ = gs.render(cam)
         # to match with original design
         if mask:
