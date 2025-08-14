@@ -135,8 +135,8 @@ def flux_inpaint_image(image_path, mask=None, prompt="urban street scene"):
 
 def main():
     # Input image path (the provided street scene)
-    image_path = "/home/liujiajun/HunyuanWorld-1.0/FlexWorld/testOutput/frames/frame_009.png"
-    mask_path = "/home/liujiajun/HunyuanWorld-1.0/FlexWorld/testOutput/frames/mask_009.png"
+    image_path = "/home/liujiajun/HunyuanWorld-1.0/FlexWorld/testOutput/frames/frame_000.png"
+    mask_path = "/home/liujiajun/HunyuanWorld-1.0/FlexWorld/testOutput/frames/mask_000.png"
     output_path = "flux_inpainted_result.png"
     
     # Prompt describing what should be inpainted
@@ -159,7 +159,6 @@ def main():
         # Save comparison - resize all images to 512×512 for consistent comparison
         original_512 = original.resize((512, 512), Image.LANCZOS)
         mask_512 = mask.resize((512, 512), Image.NEAREST)
-        # result is already 512×512
         
         # Create side-by-side comparison
         comparison_width = 512 * 3

@@ -23,13 +23,18 @@ class Perspective:
             img , mask = per.GetEquirec(height,width)   # Specify parameters(FOV, theta, phi, height, width)
             mask = mask.astype(np.float32)
             img = img.astype(np.float32)
+            # 恢复使用线性权重
             weight_mask = np.zeros((img_dir.shape[0],img_dir.shape[1], 3))
             w = img_dir.shape[1]
             weight_mask[:,0:w//2,:] = np.linspace(0,1,w//2)[...,None]
             weight_mask[:,w//2:,:] = np.linspace(1,0,w//2)[...,None]
             weight_mask = P2E(weight_mask,F,T,P)
             weight_mask, _ = weight_mask.GetEquirec(height,width)
-            blur = cv2.blur(mask,(5,5))
+            # 原有的5x5模糊（注释掉）
+            # blur = cv2.blur(mask,(5,5))
+            
+            # 增加模糊半径，改善边缘融合（特别是对于67.5度FOV）
+            blur = cv2.blur(mask,(9,9))  # 增加到9x9以获得更平滑的边缘
             blur = blur * mask
             mask = (blur == 1) * blur + (blur != 1) * blur * 0.05
             merge_image += img * weight_mask

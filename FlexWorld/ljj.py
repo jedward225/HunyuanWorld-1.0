@@ -145,8 +145,8 @@ print(f"Camera settings: FOV={fov}°, focal_length={f:.2f}, frame_size={frame_si
 Mcam.set_default_f(f)
 plan = CamPlanner() # 控制相机运镜
 
-pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
-# pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/FlexWorld/incremental_street_output/completed_pointcloud.ply')
+# pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/test_results/street/pointcloud/panorama_pointcloud.ply')
+pcd=PcdMgr(ply_file_path=f'/home/liujiajun/HunyuanWorld-1.0/FlexWorld/street_pointcloud_new.ply')
 
 pcd.pts[:,:3]=rotate_point_cloud(pcd.pts[:,:3], angle_x_deg=90, angle_y_deg=-90, angle_z_deg=0)
 
@@ -236,8 +236,29 @@ from ops.utils.pano import video2pano
 import tempfile
 import shutil
 
-# 从72帧轨道视频中选择8帧（每45度一帧）
-angles = [0, 45, 90, 135, 180, 225, 270, 315]
+# 从72帧轨道视频中选择帧（根据FOV自适应）
+# 原有的30度间隔版本（注释掉）
+# if fov <= 70:  # 对于67.5度FOV，使用12帧（每30度一帧）
+#     angles = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
+#     print(f"Using dense sampling for FOV={fov}°: 12 angles")
+# else:  # 对于90度FOV，使用8帧（每45度一帧）
+#     angles = [0, 45, 90, 135, 180, 225, 270, 315]
+#     print(f"Using standard sampling for FOV={fov}°: 8 angles")
+
+# 调整后的版本：67.5度FOV使用33.75度间隔，保持50%重叠率（与90度FOV一致）
+# 原40度间隔版本（注释掉）
+# if fov <= 70:  # 对于67.5度FOV，使用9帧（每40度一帧）
+#     angles = [0, 40, 80, 120, 160, 200, 240, 280, 320]
+#     print(f"Using optimized sampling for FOV={fov}°: 9 angles (40° interval)")
+
+# 新版本：匹配90度FOV的50%重叠率
+if fov <= 70:  # 对于67.5度FOV
+    # 为了50%重叠：67.5/2 = 33.75，但为了整数方便，使用36度
+    angles = [0, 36, 72, 108, 144, 180, 216, 252, 288, 324]
+    print(f"Using 50% overlap sampling for FOV={fov}°: 10 angles (36° interval)")
+else:  # 对于90度FOV，使用8帧（每45度一帧）
+    angles = [0, 45, 90, 135, 180, 225, 270, 315]
+    print(f"Using standard sampling for FOV={fov}°: 8 angles")
 temp_dir = tempfile.mkdtemp()
 image_paths = []
 
@@ -272,11 +293,11 @@ panorama = video2pano(image_paths, pano_output_dir, fov=fov)
 # 生成mask版本的全景图
 print("Generating mask panorama for inpainting...")
 
-# 从mask_frames_np中选择对应的8帧
+# 从mask_frames_np中选择对应的帧（与angles数量匹配）
 mask_temp_dir = tempfile.mkdtemp()
 mask_image_paths = []
 
-for angle in angles:
+for angle in angles:  # 使用相同的angles列表
     frame_idx = int((angle / 360.0) * len(mask_frames_np)) % len(mask_frames_np)
     mask_frame = mask_frames_np[frame_idx]
     

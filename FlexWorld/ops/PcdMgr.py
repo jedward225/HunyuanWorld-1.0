@@ -201,10 +201,19 @@ class PcdMgr():
         rgb, depth_img, alpha_img, *_ = gs.render(cam)
         # to match with original design
         if mask:
+            # alpha_img可能已经是4D [1, H, W, 1]，需要先挤压到2D然后重塑
+            if len(alpha_img.shape) == 4:
+                alpha_img = alpha_img.squeeze()  # 去掉维度1，变成[H, W]
             return einops.rearrange(alpha_img, 'h w -> 1 1 h w')
         elif depth:
+            # depth_img可能已经是4D [1, H, W, 1]，需要先挤压到2D然后重塑
+            if len(depth_img.shape) == 4:
+                depth_img = depth_img.squeeze()  # 去掉维度1，变成[H, W]
             return einops.rearrange(depth_img, 'h w -> 1 1 h w')
         else:
+            # rgb可能已经是4D [1, H, W, 3]，需要先挤压然后重塑
+            if len(rgb.shape) == 4:
+                rgb = rgb.squeeze(0)  # 去掉第一个维度，变成[H, W, 3]
             return einops.rearrange(rgb, 'h w c -> 1 c h w')
     
     @staticmethod
